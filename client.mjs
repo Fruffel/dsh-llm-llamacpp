@@ -22,14 +22,32 @@ window.__ModuleLoader__.load({
 		 * server owns the context window, so the card says so instead of offering
 		 * an override that would silently win; turning discovery off reveals the
 		 * pinned field in its place.
+		 *
+		 * The card is closed until asked for: one line reports whether the
+		 * configured endpoint answers, which endpoint that is, and how many models
+		 * it serves, and the fields unfold behind it. That line carries the dot the
+		 * page cannot draw — llama.cpp ignores the credential, so the row's own
+		 * credential dot never lights for this family, and the page cannot know
+		 * whether the server behind the route is up. Discovery is the seam that
+		 * actually reaches the server, so the dot is read from the same call the
+		 * Test connection button makes and the two can never disagree.
 		 */
 
 		/** Settings namespace this provider's profile lives in. */
 		const NS = "llm-llamacpp";
 		/** Slot this card occupies, keyed by that same namespace. */
 		const SLOT = "settings.models.provider-card";
-		/** Route this card configures, for the model lookups it reports. */
-		const ROUTE = "llama-cpp";
+
+		/** The probe state before the first answer: a dot that claims nothing yet. */
+		const CHECKING = Object.freeze({ status: "checking", base: "", models: [], message: undefined });
+		/** Dot colour per probe state — the whole status vocabulary, in one map. */
+		const DOT_CLASS = {
+			checking: "dsh-llamacpp-dot-checking",
+			connected: "dsh-llamacpp-dot-connected",
+			unreachable: "dsh-llamacpp-dot-unreachable",
+		};
+		/** The word the dot is read as. */
+		const DOT_LABEL = { checking: "Checking", connected: "Connected", unreachable: "Not reachable" };
 
 		/** Fields whose emptiness means "no override" rather than "an empty value". */
 		const NULLABLE = new Set(["contextWindow", "maxTokens", "temperature", "probeTimeoutMs"]);
@@ -113,6 +131,47 @@ window.__ModuleLoader__.load({
 			return patch;
 		}
 
+		/**
+		 * Ask one endpoint what it serves, through the Host's discovery seam.
+		 *
+		 * Never throws: a probe that fails is an answer too — the card reports it
+		 * beside the dot rather than letting it take the form down with it.
+		 * @param remote - the client's remote service.
+		 * @param baseURL - the endpoint to interrogate; empty asks for the applied one.
+		 * @returns the models it serves, or the message that says why it served none.
+		 */
+		async function askEndpoint(remote, baseURL) {
+			try {
+				const answer = await remote.llm.discoverModels(NS, baseURL.length === 0 ? {} : { baseURL });
+				if (answer.ok === true) return { models: answer.value ?? [] };
+				const failure = answer.error;
+				return { failure: failure === undefined ? "the Host refused this request" : failure.message };
+			} catch (error) {
+				return { failure: error.message };
+			}
+		}
+
+		/**
+		 * What the status line says after its first word.
+		 *
+		 * A reachable endpoint is named before anything else — which server the
+		 * route points at is the fact a reader opens this row for — while a failure
+		 * is its own message, which usually names the endpoint already, so it is
+		 * not repeated after it.
+		 */
+		function summaryDetail(endpoint) {
+			const message = endpoint.message ?? "";
+			if (endpoint.status === "connected") {
+				const models = endpoint.models.length === 1 ? "1 model" : `${endpoint.models.length} models`;
+				return [endpoint.base, models].filter(part => part.length > 0).join(" · ");
+			}
+			if (endpoint.status === "unreachable") {
+				return [message, message.includes(endpoint.base) ? "" : endpoint.base]
+					.filter(part => part.length > 0).join(" · ");
+			}
+			return endpoint.base;
+		}
+
 		/** Unwrap one remote answer, or throw the Host's own diagnostic. */
 		function unwrap(answer) {
 			if (answer !== undefined && answer.ok === true) return answer.value;
@@ -138,6 +197,68 @@ window.__ModuleLoader__.load({
   gap: 1rem;
   font-size: 0.8125rem;
   color: var(--dsw-alias-label-primary);
+}
+.dsh-llamacpp-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+  font-size: 0.75rem;
+  text-align: left;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+.dsh-llamacpp-summary:hover {
+  border-color: var(--dsw-alias-border-l2);
+}
+.dsh-llamacpp-summary:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+.dsh-llamacpp-dot {
+  box-sizing: border-box;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dsh-llamacpp-dot-connected {
+  background: var(--dsw-alias-state-success-primary);
+}
+.dsh-llamacpp-dot-unreachable {
+  background: var(--dsw-alias-state-error-primary);
+}
+.dsh-llamacpp-dot-checking {
+  background: var(--dsw-alias-label-secondary);
+  opacity: 0.5;
+}
+.dsh-llamacpp-summary-state {
+  flex: none;
+  font-weight: 600;
+}
+.dsh-llamacpp-summary-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+.dsh-llamacpp-chevron {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.6875rem;
+}
+.dsh-llamacpp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 .dsh-llamacpp-note {
   margin: 0;
@@ -331,33 +452,47 @@ window.__ModuleLoader__.load({
 			const [status, setStatus] = React.useState(null);
 			const [failure, setFailure] = React.useState(null);
 			const [discovered, setDiscovered] = React.useState(null);
-			const [serverFacts, setServerFacts] = React.useState(null);
+			const [endpoint, setEndpoint] = React.useState(CHECKING);
+			const [open, setOpen] = React.useState(false);
 
+			/** Read the section, and name the endpoint the first probe should ask. */
 			const load = React.useCallback(async () => {
 				try {
 					const answer = unwrap(await remote.settings.describe());
 					const row = answer.namespaces.find(candidate => candidate.ns === NS);
 					setNamespace(row ?? null);
-					setDraft(toDraft(row === undefined ? undefined : row.value));
+					const resolved = toDraft(row === undefined ? undefined : row.value);
+					setDraft(resolved);
 					setFailure(row === undefined ? `The Host registered no "${NS}" settings section.` : null);
+					return resolved.baseURL;
 				} catch (error) {
 					setFailure(error.message);
+					return "";
 				} finally {
 					setBusy(false);
 				}
 			}, [remote]);
 
-			/** What this route currently serves — the thing discovery is buying. */
-			const loadServerFacts = React.useCallback(async () => {
-				try {
-					const answer = await remote.llm.listModels(ROUTE);
-					if (answer.ok === true && answer.value.length > 0) {
-						setServerFacts({ model: answer.value[0].id, count: answer.value.length });
-					}
-				} catch {
-					// A route with no reachable server reports nothing; the card is
-					// still the place to fix that, so it stays quiet about it.
-				}
+			/**
+			 * Ask the endpoint the form names what it serves, and keep the answer as
+			 * the card's connection state.
+			 *
+			 * Run on mount with the resolved value and after every write with the
+			 * value that write left behind, so the dot describes the endpoint the
+			 * next request will reach rather than the one being typed.
+			 */
+			const probe = React.useCallback(async (baseURL) => {
+				setEndpoint({ ...CHECKING, base: baseURL });
+				const answer = await askEndpoint(remote, baseURL);
+				setEndpoint(answer.models === undefined
+					? { status: "unreachable", base: baseURL, models: [], message: answer.failure }
+					: answer.models.length === 0
+						? {
+							status: "unreachable", base: baseURL, models: [],
+							message: "the endpoint advertised no models",
+						}
+						: { status: "connected", base: baseURL, models: answer.models, message: undefined });
+				return answer;
 			}, [remote]);
 
 			// The card owns its stylesheet: an idempotent mount here means the
@@ -369,8 +504,8 @@ window.__ModuleLoader__.load({
 
 			React.useEffect(() => {
 				setBusy(true);
-				void load().then(() => loadServerFacts());
-			}, [load, loadServerFacts]);
+				void load().then(baseURL => probe(baseURL));
+			}, [load, probe]);
 
 			const value = namespace === null ? undefined : namespace.value;
 			const discovery = draft.discoverContext === true;
@@ -394,7 +529,7 @@ window.__ModuleLoader__.load({
 					setNamespace(row);
 					setDraft(toDraft(row.value));
 					setStatus(done);
-					void loadServerFacts();
+					void probe(toDraft(row.value).baseURL);
 				} catch (error) {
 					setFailure(error.message);
 				} finally {
@@ -419,16 +554,16 @@ window.__ModuleLoader__.load({
 						...Object.keys(namespace.user ?? {}),
 						...namespace.secrets.map(secret => secret.path[0]),
 					]);
+					let resolved = toDraft(namespace.value);
 					if (keys.size > 0) {
 						const ops = [...keys].map(key => ({ op: "unset", path: [key] }));
 						const row = unwrap(await remote.settings.mutate(NS, ops, namespace.revision));
 						setNamespace(row);
-						setDraft(toDraft(row.value));
-					} else {
-						setDraft(toDraft(namespace.value));
+						resolved = toDraft(row.value);
 					}
+					setDraft(resolved);
 					setStatus("Reset — the composition row applies again");
-					void loadServerFacts();
+					void probe(resolved.baseURL);
 				} catch (error) {
 					setFailure(error.message);
 				} finally {
@@ -436,22 +571,20 @@ window.__ModuleLoader__.load({
 				}
 			};
 
+			/** Test connection: probe the endpoint as typed, and show what it served. */
 			const discover = async () => {
 				setBusy(true);
 				setFailure(null);
 				setStatus(null);
 				setDiscovered(null);
 				try {
-					const answer = await remote.llm.discoverModels(NS, { baseURL: draft.baseURL.trim() });
-					if (answer.ok === true) {
-						setDiscovered(answer.value);
-						if (answer.value.length === 0) setStatus("That endpoint reported no models");
-						void loadServerFacts();
-					} else {
-						setFailure(answer.error.message);
+					const answer = await probe(draft.baseURL.trim());
+					if (answer.failure !== undefined) {
+						setFailure(answer.failure);
+						return;
 					}
-				} catch (error) {
-					setFailure(error.message);
+					setDiscovered(answer.models);
+					if (answer.models.length === 0) setStatus("That endpoint reported no models");
 				} finally {
 					setBusy(false);
 				}
@@ -487,9 +620,9 @@ window.__ModuleLoader__.load({
 				? React.createElement(Field, {
 					id: `${NS}-contextWindow`,
 					label: "Context window",
-					hint: serverFacts === null
-						? "Read from the server's /props, per resolution."
-						: `Read from /props for ${serverFacts.count === 1 ? serverFacts.model : `${serverFacts.count} models`}. Turn discovery off to pin a smaller budget.`,
+					hint: endpoint.status === "connected"
+						? `Read from /props for ${endpoint.models.length === 1 ? endpoint.models[0].id : `${endpoint.models.length} models`}. Turn discovery off to pin a smaller budget.`
+						: "Read from the server's /props, per resolution.",
 				}, React.createElement("div", { className: "dsh-llamacpp-readout" }, "discovered from the server"))
 				: React.createElement(Field, {
 					id: `${NS}-contextWindow`,
@@ -596,7 +729,28 @@ window.__ModuleLoader__.load({
 						].join("")).join("\n")),
 			);
 
-			return React.createElement("div", { className: "dsh-llamacpp-card" },
+			/**
+			 * The one line that stands in for the card while it is closed: whether the
+			 * endpoint answers, which endpoint it is, and what it serves. A collapsed
+			 * row keeps its own status visible, so the page shows one fact per
+			 * provider instead of every field of every row.
+			 */
+			const summary = React.createElement("button", {
+				type: "button", className: "dsh-llamacpp-summary",
+				"aria-expanded": open,
+				title: endpoint.message,
+				onClick: () => { setOpen(current => !current) },
+			},
+				React.createElement("span", {
+					className: `dsh-llamacpp-dot ${DOT_CLASS[endpoint.status]}`,
+					"aria-hidden": "true",
+				}),
+				React.createElement("span", { className: "dsh-llamacpp-summary-state" }, DOT_LABEL[endpoint.status]),
+				React.createElement("span", { className: "dsh-llamacpp-summary-detail" }, summaryDetail(endpoint)),
+				React.createElement("span", { className: "dsh-llamacpp-chevron", "aria-hidden": "true" }, open ? "▾" : "▸"),
+			);
+
+			const body = React.createElement("div", { className: "dsh-llamacpp-body" },
 				React.createElement("p", { className: "dsh-llamacpp-note" },
 					"Endpoint configuration for the ",
 					provider === undefined ? "llama.cpp" : provider.displayName,
@@ -606,6 +760,11 @@ window.__ModuleLoader__.load({
 				advanced,
 				actions,
 				report,
+			);
+
+			return React.createElement("div", { className: "dsh-llamacpp-card" },
+				summary,
+				open ? body : null,
 			);
 		}
 

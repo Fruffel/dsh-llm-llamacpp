@@ -162,14 +162,36 @@ try {
   if (!await evaluate(CLICK('Models'))) throw new Error('no Models entry in the settings navigation')
   await sleep(3000)
 
-  // The card sits on the provider's row and is only composed once that row's
-  // details are expanded, so the row is opened before anything is read.
+  // The card sits on the provider's row, closed until it is asked for. What it
+  // says while closed is read first — the status line is a finding in its own
+  // right — and only then is it opened, the way a person would open it.
   report.page = await evaluate(`(() => {
     const panel = document.querySelector('[role="dialog"]') ?? document.body
     return panel.innerText.slice(0, 400)
   })()`)
   report.expanded = await evaluate(CLICK('llama.cpp'))
   await sleep(2500)
+
+  report.closed = await evaluate(`(() => {
+    const summary = document.querySelector('.dsh-llamacpp-summary')
+    return {
+      cardPresent: document.querySelector('.dsh-llamacpp-card') !== null,
+      summary: summary === null ? null : summary.innerText.replace(/\\s+/g, ' '),
+      expanded: summary === null ? null : summary.getAttribute('aria-expanded'),
+      dot: summary === null ? null : (summary.querySelector('.dsh-llamacpp-dot')?.className ?? null),
+      // Scoped to the card's own body: while closed, none of its fields exist.
+      fields: document.querySelectorAll('.dsh-llamacpp-card [id^="llm-llamacpp-"]').length,
+    }
+  })()`)
+  console.log('check-card: closed ' + JSON.stringify(report.closed))
+
+  report.opened = await evaluate(`(() => {
+    const summary = document.querySelector('.dsh-llamacpp-summary')
+    if (summary === null) return false
+    summary.click()
+    return true
+  })()`)
+  await sleep(1200)
 
   report.card = await evaluate(`(() => {
     const pre = [...document.querySelectorAll('pre')].map(node => node.innerText)
@@ -296,6 +318,12 @@ try {
   console.log(JSON.stringify(report, null, 2))
   const interactions = report.interactions ?? {}
   const ok = Array.isArray(report.card?.inputs) && report.card.inputs.length > 0
+    // Closed first: one status line, no fields, and a dot that names its state.
+    && report.closed?.cardPresent === true
+    && report.closed?.expanded === 'false'
+    && report.closed?.fields === 0
+    && /dsh-llamacpp-dot-(connected|unreachable|checking)/.test(report.closed?.dot ?? '')
+    && report.opened === true
     && interactions.styles?.cardPresent === true
     && interactions.styles?.display === 'flex'
     && interactions.styles?.inputRadius !== null
@@ -316,7 +344,7 @@ try {
     && interactions.afterSave?.temperature === '0.35'
     && interactions.afterReset?.temperature === ''
   console.error(ok
-    ? 'check-card: OK styling, conditional fields, discovery, save, and reset all behaved'
+    ? 'check-card: OK the closed status line, styling, conditional fields, discovery, save, and reset all behaved'
     : 'check-card: FAIL see card/interactions in the report')
   process.exitCode = ok ? 0 : 1
 } catch (error) {

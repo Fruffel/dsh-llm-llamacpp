@@ -68,11 +68,21 @@ Two things the harness needs from the host machine:
 
 ### The configuration card
 
-The web GUI edits this provider in place. Settings → Models opens a row for
-**llama.cpp**; opening it reveals a card with every field below, a **Test
-connection** button that interrogates the endpoint being typed and reports the
-models and context window it finds, and **Reset to composition**, which clears
-the section so the row's own values apply again.
+The web GUI edits this provider in place. Settings → Models shows a row for
+**llama.cpp** whose card stays closed until it is asked for: one status line
+reports whether the configured endpoint answers — a green dot when it does, a
+red one when it does not, with the reason beside it — which endpoint that is,
+and how many models it serves. Clicking the line unfolds a card with every field
+below, a **Test connection** button that interrogates the endpoint being typed
+and reports the models and context window it finds, and **Reset to composition**,
+which clears the section so the row's own values apply again.
+
+That dot is the card's own, and deliberately so: llama.cpp ignores the
+credential, so the page's own credential dot never lights for this family, and
+nothing but a live probe can say whether the server behind the route is up. The
+probe is the same `llm/discoverModels` call the **Test connection** button
+makes, so the dot and the model list cannot disagree; it runs once when the card
+appears and again after every save or reset.
 
 That card is this package's browser half (`client.mjs`, declared as
 `dsh.client` in `package.json`), registered into the `settings.models.provider-card`
@@ -165,22 +175,26 @@ a changed `index.mjs`/`lib/*.mjs` needs `npm run assets` followed by a
 ## Verify
 
 ```bash
-npm test                    # 37 tests, no network, no model
+npm test                    # 44 tests, no network, no model
 npm run mock                # a stand-in llama-server on 127.0.0.1:18080
 npm run check:server -- http://desktop:8080/v1 off   # against a real server
 npm run check:card -- "http://127.0.0.1:3080/?token=<launch token>"   # the GUI card
 ```
 
-`check:card` drives headless Chrome over CDP through Settings → Models: it opens
-the llama.cpp row, reads the rendered fields, presses **Test connection**,
-saves a value, then resets — and fails if any of that did not happen. It needs a
-Chrome/Chromium binary (`CHROME=/path/to/chrome` overrides discovery; a
-Playwright-installed Chromium works).
+`check:card` drives headless Chrome over CDP through Settings → Models: it
+reads the closed status line the llama.cpp row shows, opens the card, reads the
+rendered fields, presses **Test connection**, saves a value, then resets — and
+fails if any of that did not happen. It needs a Chrome/Chromium binary
+(`CHROME=/path/to/chrome` overrides discovery; a Playwright-installed Chromium
+works).
 
 `npm test` covers the pure wire helpers, the chunk translation contract, the
 adapter against a mock llama.cpp endpoint (streaming, tool calls, errors,
-context discovery, fallbacks, reasoning capability, cold-start thinking), and
-the plugin's own `apply()` against stubs of the `llm` and `settings` services.
+context discovery, fallbacks, reasoning capability, cold-start thinking), the
+plugin's own `apply()` against stubs of the `llm` and `settings` services —
+and the browser half, rendered in jsdom against stubbed remotes through the same
+`__ModuleLoader__` seam the page uses (closed until asked, the endpoint's dot,
+the fields it reveals, and the re-probe a write triggers).
 The mock server deliberately advertises 8192 in the catalog and 40960 on
 `/props`, so a resolution of 40960 proves the context came from the server.
 
