@@ -6,9 +6,21 @@
   "description": "llama.cpp LLM provider for the DeepSeek Harness: dynamic model catalog plus automatic context-window discovery",
   "main": "index.mjs",
   "exports": {
-    ".": "./index.mjs"
+    ".": "./index.mjs",
+    "./client": "./client.mjs"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "check:card": "node test/check-card.mjs",
+    "check:server": "node test/verify-against-server.mjs",
+    "mock": "node test/mock-llamacpp-server.mjs"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    }
   }
 }

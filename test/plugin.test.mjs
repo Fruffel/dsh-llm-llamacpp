@@ -628,6 +628,36 @@ test('prewarm probes the loaded model and reports what it found', async () => {
   }
 })
 
+test('the profile supplies request defaults the request itself does not', async () => {
+  const server = await startServer({
+    props: { default_generation_settings: { n_ctx: 8192 } },
+    sse: sse([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]) + 'data: [DONE]\n\n',
+  })
+  try {
+    const adapter = adapterFor(server.baseURL, { maxTokens: 1024, temperature: 0.25 })
+    const resolved = await adapter.resolveModel('llama-cpp', 'qwen3-4b')
+    // A configured cap wins over the one derived from the context window.
+    assert.equal(resolved.defaultMaxTokens, 1024)
+
+    await drain(adapter.stream({
+      provider: 'llama-cpp',
+      model: 'qwen3-4b',
+      messages: [],
+      temperature: 0.9,
+    }))
+    const body = JSON.parse(server.requests.find(entry => entry.url.startsWith('/v1/chat/completions')).body)
+    // The request's own temperature wins; maxTokens is left to the caller here.
+    assert.equal(body.temperature, 0.9)
+
+    server.requests.length = 0
+    await drain(adapter.stream({ provider: 'llama-cpp', model: 'qwen3-4b', messages: [] }))
+    const fallback = JSON.parse(server.requests.find(entry => entry.url.startsWith('/v1/chat/completions')).body)
+    assert.equal(fallback.temperature, 0.25)
+  } finally {
+    await server.close()
+  }
+})
+
 test('prewarm against a dead endpoint reports it instead of rejecting', async () => {
   const adapter = adapterFor('http://127.0.0.1:1/v1')
   const found = await adapter.prewarm('llama-cpp')

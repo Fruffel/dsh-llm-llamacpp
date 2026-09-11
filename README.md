@@ -46,6 +46,20 @@ Two things the harness needs from the host machine:
   default is this deployment's build path; set the field to use another.
 * **Node 22+**, which the harness already requires.
 
+### The configuration card
+
+The web GUI edits this provider in place. Settings → Models opens a row for
+**llama.cpp**; opening it reveals a card with every field below, a **Test
+connection** button that interrogates the endpoint being typed and reports the
+models and context window it finds, and **Reset to composition**, which clears
+the section so the row's own values apply again.
+
+That card is this package's browser half (`client.mjs`, declared as
+`dsh.client` in `package.json`), registered into the `settings.models.provider-card`
+slot under the `llm-llamacpp` key. Edits land in `llm-llamacpp` in the settings
+document and reach the next request — no restart. Only a change to the plugin's
+own code needs one.
+
 ### This deployment (dsh-ops)
 
 The package also lives in the `dsh-ops` checkout as `plugins/dsh-llm-llamacpp/`,
@@ -79,10 +93,18 @@ gets one, so `http://host:8080` and `http://host:8080/v1` are the same endpoint.
 | `apiKey` | env `LLAMA_API_KEY`, then `no-key` | Bearer token; ignored unless `llama-server --api-key` is set |
 | `headers` | none | Extra request headers, for a proxy in front of the server |
 | `displayName` | `llama.cpp` | Name in provider selectors |
-| `contextWindow` | discovered | Pinned context size; skips discovery entirely when set |
+| `contextWindow` | discovered | Pinned context size |
 | `discoverContext` | `true` | Ask `/props`; a server that never answers still serves chat |
-| `harnessRoot` | this build's checkout | Harness to load the LLM seam from |
+| `maxTokens` | derived from the context window | Output cap advertised per request |
+| `temperature` | none | Applied when a request names none |
+| `probeTimeoutMs` | `1500` | How long `/props` may take before a request proceeds without it |
 | `logLevel` | `silent` | `info` logs what was discovered at startup |
+| `harnessRoot` | this build's checkout | Harness to load the LLM seam from |
+
+Every field is editable from the card except `displayName` and `harnessRoot`,
+which stay composition-level: a display name belongs to the row that declares
+the route, and the checkout path is a property of the machine, not of the
+endpoint.
 
 Every field is also the base layer of the **`llm-llamacpp` settings section**,
 so the Settings and Models pages edit the live endpoint without touching the
@@ -129,10 +151,17 @@ a changed `index.mjs`/`lib/*.mjs` needs `npm run assets` followed by a
 ## Verify
 
 ```bash
-npm test                                   # 36 tests, no network, no model
-node test/mock-llamacpp-server.mjs --port 18080   # then point baseURL at it
-node test/verify-against-server.mjs http://desktop:8080/v1 off   # against a real server
+npm test                    # 37 tests, no network, no model
+npm run mock                # a stand-in llama-server on 127.0.0.1:18080
+npm run check:server -- http://desktop:8080/v1 off   # against a real server
+npm run check:card -- "http://127.0.0.1:3080/?token=<launch token>"   # the GUI card
 ```
+
+`check:card` drives headless Chrome over CDP through Settings → Models: it opens
+the llama.cpp row, reads the rendered fields, presses **Test connection**,
+saves a value, then resets — and fails if any of that did not happen. It needs a
+Chrome/Chromium binary (`CHROME=/path/to/chrome` overrides discovery; a
+Playwright-installed Chromium works).
 
 `npm test` covers the pure wire helpers, the chunk translation contract, the
 adapter against a mock llama.cpp endpoint (streaming, tool calls, errors,

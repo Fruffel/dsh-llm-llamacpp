@@ -41,28 +41,36 @@ export const DEFAULT_API_KEY = 'no-key'
 export const name = 'llm-llamacpp'
 export const inject = ['llm']
 
-/** Config schema, handed to the loader and to the settings section it installs. */
+/**
+ * Config schema: the composition row's shape, the settings section's shape, and
+ * therefore the Settings form the web GUI renders. One list, so a field cannot
+ * exist in one place and be missing from another.
+ */
 export const Config = await (async () => {
   const { default: Schema } = await harnessModule('@deepseek-ai/schemastery')
   return Schema.object({
     baseURL: Schema.string()
-      .description('llama.cpp server API base, e.g. http://localhost:8080/v1'),
+      .description('llama.cpp server API base, e.g. http://desktop:8080/v1'),
     apiKey: Schema.string()
-      .description('Credential sent as a bearer token; llama.cpp itself ignores it unless --api-key is set'),
+      .description('Bearer token sent with every request; llama.cpp ignores it unless started with --api-key'),
     headers: Schema.dict(Schema.string())
       .description('Extra request headers, for a proxy in front of the server'),
     displayName: Schema.string()
       .description('Name shown in provider selectors'),
     contextWindow: Schema.natural()
-      .description('Pinned context size; when absent the server is asked and its answer is used'),
+      .description('Pinned context size. Leave empty to read it from the server at /props'),
     discoverContext: Schema.boolean()
-      .description('Ask GET /props for the context window (default true)'),
-    harnessRoot: Schema.string()
-      .description('Harness checkout to load the LLM seam from, when it is not the default build'),
-    requestTimeoutMs: Schema.natural()
-      .description('Reserved: bound on a whole streaming request'),
+      .description('Ask the server for its context window and thinking capability (default true)'),
+    maxTokens: Schema.natural()
+      .description('Output cap advertised per request. Leave empty to derive it from the context window'),
+    temperature: Schema.number()
+      .description('Sampling temperature applied when a request names none'),
+    probeTimeoutMs: Schema.natural()
+      .description('How long the /props probe may take before a request proceeds without it (default 1500)'),
     logLevel: Schema.union(['silent', 'info', 'verbose'])
-      .description('Startup diagnostics verbosity'),
+      .description('Diagnostics verbosity: silent, info, or verbose'),
+    harnessRoot: Schema.string()
+      .description('Harness checkout to load the LLM seam from, when this deployment runs from another build'),
   })
 })()
 
@@ -238,19 +246,51 @@ export function normalizeConfig(config = {}) {
     provider: PROVIDER_ID,
     baseURL: normalizeBaseUrl(raw),
     apiKey: firstNonEmpty(config.apiKey, process.env.LLAMA_API_KEY, DEFAULT_API_KEY),
-    headers: isPlainObject(config.headers) ? config.headers : {},
+    headers: headerMap(config.headers),
     displayName: firstNonEmpty(config.displayName, 'llama.cpp'),
-    ...positiveInt(config.contextWindow) === undefined
-      ? {}
-      : { contextWindow: positiveInt(config.contextWindow) },
     discoverContext: config.discoverContext !== false,
-    ...typeof config.harnessRoot === 'string' && config.harnessRoot.length > 0
-      ? { harnessRoot: config.harnessRoot }
-      : {},
+    ...optional(positiveInt, config.maxTokens, 'maxTokens'),
+    ...optional(positiveInt, config.contextWindow, 'contextWindow'),
+    ...optional(positiveInt, config.probeTimeoutMs, 'probeTimeoutMs'),
+    ...optional(finiteNumber, config.temperature, 'temperature'),
+    ...optional(nonEmptyString, config.harnessRoot, 'harnessRoot'),
     logLevel: config.logLevel === 'verbose' || config.logLevel === 'info' || config.logLevel === 'silent'
       ? config.logLevel
       : 'silent',
   }
+}
+
+/** Include one optional profile field only when it resolved to a usable value. */
+function optional(read, value, key) {
+  const resolved = read(value)
+  return resolved === undefined ? {} : { [key]: resolved }
+}
+
+/** A header map from either a JSON object or the newline-separated text a form produces. */
+function headerMap(value) {
+  if (typeof value === 'string') {
+    const headers = {}
+    for (const line of value.split('\n')) {
+      const separator = line.indexOf(':')
+      if (separator <= 0) continue
+      const name = line.slice(0, separator).trim()
+      const headerValue = line.slice(separator + 1).trim()
+      if (name.length > 0 && headerValue.length > 0) headers[name] = headerValue
+    }
+    return headers
+  }
+  return isPlainObject(value) ? value : {}
+}
+
+/** The value as a finite number, or `undefined`. */
+function finiteNumber(value) {
+  const number = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(number) ? number : undefined
+}
+
+/** The value as a non-empty trimmed string, or `undefined`. */
+function nonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
 }
 
 /**
