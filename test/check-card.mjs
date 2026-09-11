@@ -127,11 +127,15 @@ try {
     }
     if (message.method === 'Runtime.consoleAPICalled') {
       const text = message.params.args.map(arg => arg.value ?? arg.description ?? '').join(' ')
-      consoleLines.push(`${message.params.type}: ${text}`)
+      const line = `${message.params.type}: ${text}`
+      consoleLines.push(line)
+      if (/llama|slot|error|exception/i.test(line)) console.error('check-card console> ' + line.slice(0, 400))
     }
     if (message.method === 'Runtime.exceptionThrown') {
       const details = message.params.exceptionDetails
-      consoleLines.push(`exception: ${details.exception?.description ?? details.text}`)
+      const line = `exception: ${details.exception?.description ?? details.text}`
+      consoleLines.push(line)
+      console.error('check-card console> ' + line.slice(0, 400))
     }
   }
   const send = (method, params = {}) => new Promise((resolve, reject) => {
@@ -177,9 +181,74 @@ try {
     return { inputs, buttons, pre }
   })()`)
 
+  // What the card actually put on the page, read before anything is driven.
+  report.diagnostic = await evaluate(`(() => ({
+    cardPresent: document.querySelector('.dsh-llamacpp-card') !== null,
+    stylePresent: document.getElementById('dsh-llamacpp-card-css') !== null,
+    fieldIds: [...document.querySelectorAll('[id^="llm-llamacpp-"]')].map(node => node.id),
+    panelTail: (document.querySelector('[role="dialog"]') ?? document.body).innerText.slice(-600),
+  }))()`)
+  console.log('check-card: diagnostic ' + JSON.stringify(report.diagnostic))
+
   // Drive the card the way a person would: interrogate the endpoint, change a
   // field, save it, then put the section back the way it was.
   report.interactions = {}
+  // Whether the card's stylesheet is *applied* — the only question that matters,
+  // and one the DOM cannot answer ambiguously the way a tag lookup can.
+  report.interactions.styles = await evaluate(`(() => {
+    const card = document.querySelector('.dsh-llamacpp-card')
+    if (card === null) return { cardPresent: false }
+    const style = getComputedStyle(card)
+    const input = document.querySelector('#llm-llamacpp-baseURL')
+    return {
+      cardPresent: true,
+      gap: style.gap,
+      display: style.display,
+      separator: style.borderTopWidth,
+      inputRadius: input === null ? null : getComputedStyle(input).borderRadius,
+      matchedRules: [...document.styleSheets].reduce((count, sheet) => {
+        try { return count + [...sheet.cssRules].filter(rule => (rule.selectorText ?? '').includes('dsh-llamacpp')).length } catch { return count }
+      }, 0),
+    }
+  })()`)
+
+  report.interactions.advanced = await evaluate(
+    'document.querySelectorAll("details.dsh-llamacpp-details").length')
+
+  // Discovery on: the window is the server's answer, so no override is offered.
+  report.interactions.discoveryOn = await evaluate(`(() => {
+    const toggle = document.querySelector('#llm-llamacpp-discoverContext')
+    const field = document.querySelector('#llm-llamacpp-contextWindow')
+    return {
+      checked: toggle?.checked ?? null,
+      present: field !== null,
+      probeVisible: document.querySelector('#llm-llamacpp-probeTimeoutMs') !== null,
+    }
+  })()`)
+
+  // Discovery off: the pinned field takes its place and becomes required.
+  await evaluate(`(() => {
+    const toggle = document.querySelector('#llm-llamacpp-discoverContext')
+    toggle.click()
+    return true
+  })()`)
+  await sleep(600)
+  report.interactions.discoveryOff = await evaluate(`(() => {
+    const field = document.querySelector('#llm-llamacpp-contextWindow')
+    return {
+      present: field !== null,
+      readOnly: field?.readOnly ?? null,
+      type: field?.type ?? null,
+      probeVisible: document.querySelector('#llm-llamacpp-probeTimeoutMs') !== null,
+    }
+  })()`)
+  // Put the toggle back so the rest of the run starts from the real state.
+  await evaluate(`(() => {
+    document.querySelector('#llm-llamacpp-discoverContext').click()
+    return true
+  })()`)
+  await sleep(600)
+
   await evaluate(CLICK('Test connection'))
   await sleep(4000)
   report.interactions.discovery = await evaluate(`(() => {
@@ -227,11 +296,27 @@ try {
   console.log(JSON.stringify(report, null, 2))
   const interactions = report.interactions ?? {}
   const ok = Array.isArray(report.card?.inputs) && report.card.inputs.length > 0
+    && interactions.styles?.cardPresent === true
+    && interactions.styles?.display === 'flex'
+    && interactions.styles?.inputRadius !== null
+    && interactions.styles?.matchedRules > 5
+    && interactions.advanced === 1
+    // Discovery on: the server answers, so the window field is a readout that
+    // no longer exists as an editable input, not a disabled one.
+    && interactions.discoveryOn?.present === false
+    && interactions.discoveryOn?.checked === true
+    // Discovery off: an editable number takes its place.
+    && interactions.discoveryOff?.present === true
+    && interactions.discoveryOff?.readOnly === false
+    && interactions.discoveryOff?.type === 'number'
+    // The capability probe runs in both modes, so its timeout is always offered.
+    && interactions.discoveryOn?.probeVisible === true
+    && interactions.discoveryOff?.probeVisible === true
     && (interactions.discovery?.pre ?? '').includes('113920')
     && interactions.afterSave?.temperature === '0.35'
     && interactions.afterReset?.temperature === ''
   console.error(ok
-    ? 'check-card: OK the card rendered, discovered the endpoint, saved, and reset'
+    ? 'check-card: OK styling, conditional fields, discovery, save, and reset all behaved'
     : 'check-card: FAIL see card/interactions in the report')
   process.exitCode = ok ? 0 : 1
 } catch (error) {

@@ -8,7 +8,7 @@ catalog from `GET /v1/models` and — the point of the exercise — the **contex
 window** from the server itself, so compaction, the token meter, and the GUI's
 context display all size themselves to whatever the server has loaded right now.
 Swap the model behind the server and the next turn already knows the new
-window; nothing in this deployment has to be edited.
+window; nothing here has to be edited.
 
 ```
 GET /props     → default_generation_settings.n_ctx  ← authoritative context window
@@ -43,7 +43,7 @@ Two things the harness needs from the host machine:
 * **`harnessRoot`** — where the harness checkout lives. The plugin imports the
   harness's own `LlmAdapter`, `LlmError`, and `attributionHeaders` from it so
   error identity and attribution stay exactly what the runtime expects. The
-  default is this deployment's build path; set the field to use another.
+  field exists because the default is one machine's build path; set it to yours.
 * **Node 22+**, which the harness already requires.
 
 ### The configuration card
@@ -60,14 +60,6 @@ slot under the `llm-llamacpp` key. Edits land in `llm-llamacpp` in the settings
 document and reach the next request — no restart. Only a change to the plugin's
 own code needs one.
 
-### This deployment (dsh-ops)
-
-The package also lives in the `dsh-ops` checkout as `plugins/dsh-llm-llamacpp/`,
-where the installer deploys every package it finds:
-
-```bash
-cd ~/Documents/dsh-ops && npm run assets     # copies plugins + renders the patch
-```
 
 ## Configure
 
@@ -143,8 +135,10 @@ a changed `index.mjs`/`lib/*.mjs` needs `npm run assets` followed by a
   harness then refuses an explicit effort instead of silently ignoring it.
   Measured on Qwen3.8-27B: `off` answers in 2 tokens with no reasoning, `high`
   spends 33 reasoning tokens before the same answer.
-* **Port 8080 is coolify-proxy on this machine.** Point `baseURL` at another
-  port (`llama-server --port 18080`) or the requests reach the proxy.
+* **A base URL without `/v1` gets one**, so `http://host:8080` and
+  `http://host:8080/v1` address the same server. If something else already holds
+  the port you meant (`llama-server --port 18080`), the failure is a 404 or a
+  hang from that other service, not from this plugin.
 * The catalog is cached for 5s and a discovered context window for 60s; a
   restarted server is picked up on the next request after that.
 

@@ -15,43 +15,42 @@ window.__ModuleLoader__.load({
 		 * (`provider`, `configured`, `keyConfigured`), so the card owns its own
 		 * data: it reads the `llm-llamacpp` namespace through `remote.settings`
 		 * and writes it back through the same seam. Nothing here restates the
-		 * Host's schema — `FIELDS` names each control once, and the Host
-		 * validates whatever comes back.
+		 * Host's schema — the key table below names each control once, and the
+		 * Host validates whatever comes back.
+		 *
+		 * Fields appear only where they decide something. With discovery on, the
+		 * server owns the context window, so the card says so instead of offering
+		 * an override that would silently win; turning discovery off reveals the
+		 * pinned field in its place.
 		 */
 
 		/** Settings namespace this provider's profile lives in. */
 		const NS = "llm-llamacpp";
 		/** Slot this card occupies, keyed by that same namespace. */
 		const SLOT = "settings.models.provider-card";
-
-		/** One editable field, naming the control that edits it. */
-		const FIELDS = [
-			{ key: "baseURL", label: "Base URL", kind: "text", placeholder: "http://desktop:8080/v1", hint: "The llama.cpp API base. A value without /v1 gets one." },
-			{ key: "apiKey", label: "API key", kind: "password", placeholder: "no-key", hint: "Sent as a bearer token. llama.cpp ignores it unless started with --api-key." },
-			{ key: "headers", label: "Extra headers", kind: "map", lines: 3, hint: "One per line, as name: value. For a proxy in front of the server." },
-			{ key: "contextWindow", label: "Pinned context window", kind: "number", hint: "Leave empty to read it from the server at /props." },
-			{ key: "maxTokens", label: "Output cap", kind: "number", hint: "Leave empty to derive it from the context window." },
-			{ key: "temperature", label: "Temperature", kind: "number", step: "0.05", hint: "Used when a request names none." },
-			{ key: "probeTimeoutMs", label: "Probe timeout (ms)", kind: "number", hint: "How long /props may take before a request proceeds without it." },
-			{ key: "discoverContext", label: "Discover from the server", kind: "boolean", hint: "Ask /props for the context window and thinking capability." },
-			{ key: "logLevel", label: "Diagnostics", kind: "select", options: ["silent", "info", "verbose"] },
-		];
+		/** Route this card configures, for the model lookups it reports. */
+		const ROUTE = "llama-cpp";
 
 		/** Fields whose emptiness means "no override" rather than "an empty value". */
 		const NULLABLE = new Set(["contextWindow", "maxTokens", "temperature", "probeTimeoutMs"]);
+		/** Every key the card edits, in form order. */
+		const KEYS = [
+			"baseURL", "apiKey", "headers", "contextWindow", "maxTokens",
+			"temperature", "probeTimeoutMs", "discoverContext", "logLevel",
+		];
 
 		/** Render a resolved profile back into the strings the form edits. */
 		function toDraft(value) {
 			const source = value ?? {};
 			const draft = {};
-			for (const field of FIELDS) {
-				const current = source[field.key];
-				if (field.kind === "boolean") {
-					draft[field.key] = current === undefined ? true : current === true;
-				} else if (field.kind === "map") {
-					draft[field.key] = mapToText(current);
+			for (const key of KEYS) {
+				const current = source[key];
+				if (key === "discoverContext") {
+					draft[key] = current === undefined ? true : current === true;
+				} else if (key === "headers") {
+					draft[key] = mapToText(current);
 				} else {
-					draft[field.key] = current === undefined || current === null ? "" : String(current);
+					draft[key] = current === undefined || current === null ? "" : String(current);
 				}
 			}
 			return draft;
@@ -84,28 +83,32 @@ window.__ModuleLoader__.load({
 		function patchOf(base, draft) {
 			const baseDraft = toDraft(base);
 			const patch = {};
-			for (const field of FIELDS) {
-				if (draft[field.key] === baseDraft[field.key]) continue;
-				if (field.kind === "boolean") {
-					patch[field.key] = draft[field.key] === true;
+			for (const key of KEYS) {
+				if (draft[key] === baseDraft[key]) continue;
+				if (key === "discoverContext") {
+					patch[key] = draft[key] === true;
 					continue;
 				}
-				if (field.kind === "map") {
-					patch[field.key] = textToMap(draft[field.key]);
+				if (key === "headers") {
+					patch[key] = textToMap(draft[key]);
 					continue;
 				}
-				const raw = String(draft[field.key] ?? "").trim();
+				const raw = String(draft[key] ?? "").trim();
 				if (raw.length === 0) {
-					if (NULLABLE.has(field.key)) patch[field.key] = null;
+					if (NULLABLE.has(key)) patch[key] = null;
 					continue;
 				}
-				if (field.kind === "number") {
-					const parsed = field.step === undefined ? Number.parseInt(raw, 10) : Number.parseFloat(raw);
-					if (!Number.isFinite(parsed)) continue;
-					patch[field.key] = parsed;
+				if (key === "temperature") {
+					const parsed = Number.parseFloat(raw);
+					if (Number.isFinite(parsed)) patch[key] = parsed;
 					continue;
 				}
-				patch[field.key] = raw;
+				if (NULLABLE.has(key)) {
+					const parsed = Number.parseInt(raw, 10);
+					if (Number.isFinite(parsed)) patch[key] = parsed;
+					continue;
+				}
+				patch[key] = raw;
 			}
 			return patch;
 		}
@@ -117,54 +120,223 @@ window.__ModuleLoader__.load({
 			throw new Error(failure === undefined ? "the Host refused this request" : failure.message);
 		}
 
-		const styles = {
-			wrap: { marginTop: "0.5rem", borderTop: "1px solid var(--dsh-border, rgba(127,127,127,0.25))", paddingTop: "0.75rem" },
-			grid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(15rem, 1fr))", gap: "0.6rem" },
-			field: { display: "flex", flexDirection: "column", gap: "0.2rem", minWidth: 0 },
-			label: { fontSize: "0.75rem", opacity: 0.8 },
-			hint: { fontSize: "0.7rem", opacity: 0.55, lineHeight: 1.35 },
-			input: {
-				width: "100%", boxSizing: "border-box", padding: "0.35rem 0.5rem",
-				borderRadius: "0.375rem", border: "1px solid var(--dsh-border, rgba(127,127,127,0.35))",
-				background: "var(--dsh-input-bg, transparent)", color: "inherit", font: "inherit", fontSize: "0.8rem",
-			},
-			row: { display: "flex", alignItems: "center", gap: "0.4rem" },
-			actions: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem", marginTop: "0.7rem" },
-			button: {
-				padding: "0.3rem 0.7rem", borderRadius: "0.375rem",
-				border: "1px solid var(--dsh-border, rgba(127,127,127,0.35))",
-				background: "var(--dsh-button-bg, transparent)", color: "inherit", font: "inherit",
-				fontSize: "0.78rem", cursor: "pointer",
-			},
-			primary: { fontWeight: 600 },
-			status: { fontSize: "0.75rem", opacity: 0.8 },
-			error: { fontSize: "0.75rem", color: "var(--dsh-danger, #d9534f)" },
-			pre: {
-				margin: "0.5rem 0 0", padding: "0.4rem 0.5rem", maxHeight: "10rem", overflow: "auto",
-				fontSize: "0.72rem", lineHeight: 1.4, whiteSpace: "pre-wrap",
-				borderRadius: "0.375rem", background: "var(--dsh-code-bg, rgba(127,127,127,0.12))",
-			},
-			summary: { fontSize: "0.75rem", opacity: 0.8, marginBottom: "0.5rem" },
-		};
+		/**
+		 * The card's stylesheet.
+		 *
+		 * Injected once, into a link the plugin's own fiber removes again. Every
+		 * colour is a theme alias, so the card follows light and dark without a
+		 * second rule set, and each class is package-scoped because a slot shares
+		 * the page with everything else.
+		 */
+		const CSS = `
+.dsh-llamacpp-card {
+  margin-top: 0.75rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  font-size: 0.8125rem;
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-llamacpp-note {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+.dsh-llamacpp-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.dsh-llamacpp-legend {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-secondary);
+}
+.dsh-llamacpp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem 1rem;
+  align-items: start;
+}
+.dsh-llamacpp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.dsh-llamacpp-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.dsh-llamacpp-hint {
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  color: var(--dsw-alias-label-secondary);
+}
+.dsh-llamacpp-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 0.5rem;
+}
+.dsh-llamacpp-input:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+.dsh-llamacpp-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.dsh-llamacpp-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 0.5rem;
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.dsh-llamacpp-toggle input {
+  margin: 0;
+  accent-color: var(--dsw-alias-brand-primary);
+}
+.dsh-llamacpp-details {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 0.5rem;
+  background: var(--dsw-alias-bg-layer-1);
+}
+.dsh-llamacpp-details > summary {
+  padding: 0.45rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.dsh-llamacpp-details[open] > summary {
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+.dsh-llamacpp-details > .dsh-llamacpp-grid {
+  padding: 0.75rem 0.6rem;
+}
+.dsh-llamacpp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dsh-llamacpp-button {
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+.dsh-llamacpp-button:hover:not(:disabled) {
+  border-color: var(--dsw-alias-brand-primary);
+}
+.dsh-llamacpp-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.dsh-llamacpp-button-primary:not(:disabled) {
+  color: var(--dsw-alias-bg-base);
+  background: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
+  font-weight: 600;
+}
+.dsh-llamacpp-status {
+  font-size: 0.75rem;
+  color: var(--dsw-alias-state-success-primary);
+}
+.dsh-llamacpp-error {
+  font-size: 0.75rem;
+  color: var(--dsw-alias-state-error-primary);
+}
+.dsh-llamacpp-readout {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.5rem;
+  background: var(--dsw-alias-bg-layer-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+`;
+
+		/** Attach the stylesheet once, and let the plugin's fiber take it away again. */
+		/**
+		 * Attach the card's stylesheet, once per document.
+		 *
+		 * Deliberately not registered as a fiber effect: a hot reload unloads and
+		 * re-applies this module without re-running a disposer's counterpart, so
+		 * a fiber-owned tag would be stripped and never restored. The tag is
+		 * idempotent by id, and it is one scoped stylesheet on a page the card is
+		 * already part of.
+		 * @returns whether this call added the tag.
+		 */
+		function mountStyles() {
+			const id = "dsh-llm-llamacpp-card-css";
+			if (typeof document === "undefined") return false;
+			// `querySelector` rather than `getElementById`: the two disagree in
+			// headless Chromium about a style element this code just appended, and
+			// the selector is the one that answers correctly in both.
+			if (document.querySelector(`style#${id}`) !== null) return false;
+			const tag = document.createElement("style");
+			tag.id = id;
+			tag.textContent = CSS;
+			document.head.appendChild(tag);
+			return true;
+		}
+
+		/** One labelled control, with its hint beneath it. */
+		function Field(props) {
+			return React.createElement("div", { className: "dsh-llamacpp-field" },
+				props.label === undefined
+					? null
+					: React.createElement("label", { className: "dsh-llamacpp-label", htmlFor: props.id }, props.label),
+				props.children,
+				props.hint === undefined
+					? null
+					: React.createElement("span", { className: "dsh-llamacpp-hint" }, props.hint),
+			);
+		}
 
 		/**
 		 * The provider's configuration card.
-		 * @param props - the hosted card's share (the provider row) and the page's copy function.
+		 * @param props - the hosted card's share: the provider row it sits on.
 		 * @returns the card.
 		 */
 		function LlamaCppCard(props) {
-			const { provider, remote, readOnly } = props;
+			const { provider, remote } = props;
 			const [namespace, setNamespace] = React.useState(null);
 			const [draft, setDraft] = React.useState(() => toDraft(undefined));
 			const [busy, setBusy] = React.useState(true);
 			const [status, setStatus] = React.useState(null);
 			const [failure, setFailure] = React.useState(null);
 			const [discovered, setDiscovered] = React.useState(null);
+			const [serverFacts, setServerFacts] = React.useState(null);
 
 			const load = React.useCallback(async () => {
 				try {
 					const answer = unwrap(await remote.settings.describe());
-					const row = answer.namespaces.find((candidate) => candidate.ns === NS);
+					const row = answer.namespaces.find(candidate => candidate.ns === NS);
 					setNamespace(row ?? null);
 					setDraft(toDraft(row === undefined ? undefined : row.value));
 					setFailure(row === undefined ? `The Host registered no "${NS}" settings section.` : null);
@@ -175,18 +347,38 @@ window.__ModuleLoader__.load({
 				}
 			}, [remote]);
 
+			/** What this route currently serves — the thing discovery is buying. */
+			const loadServerFacts = React.useCallback(async () => {
+				try {
+					const answer = await remote.llm.listModels(ROUTE);
+					if (answer.ok === true && answer.value.length > 0) {
+						setServerFacts({ model: answer.value[0].id, count: answer.value.length });
+					}
+				} catch {
+					// A route with no reachable server reports nothing; the card is
+					// still the place to fix that, so it stays quiet about it.
+				}
+			}, [remote]);
+
+			// The card owns its stylesheet: an idempotent mount here means the
+			// styles are present whenever the card is, whatever the module
+			// lifecycle did before this render.
+			React.useEffect(() => {
+				mountStyles();
+			}, []);
+
 			React.useEffect(() => {
 				setBusy(true);
-				void load();
-			}, [load]);
+				void load().then(() => loadServerFacts());
+			}, [load, loadServerFacts]);
 
 			const value = namespace === null ? undefined : namespace.value;
-			const disabled = readOnly === true || busy;
+			const discovery = draft.discoverContext === true;
 			const patch = patchOf(value, draft);
 			const changed = Object.keys(patch).length > 0;
 
 			const edit = (key, next) => {
-				setDraft((current) => ({ ...current, [key]: next }));
+				setDraft(current => ({ ...current, [key]: next }));
 			};
 
 			const write = async (section, done) => {
@@ -202,6 +394,7 @@ window.__ModuleLoader__.load({
 					setNamespace(row);
 					setDraft(toDraft(row.value));
 					setStatus(done);
+					void loadServerFacts();
 				} catch (error) {
 					setFailure(error.message);
 				} finally {
@@ -213,10 +406,9 @@ window.__ModuleLoader__.load({
 
 			/**
 			 * Remove this namespace's whole user layer, so the composition row
-			 * applies again. `replace({})` would leave an empty section behind;
-			 * unsetting each stored path is what actually clears it — and the
-			 * paths are named rather than rebuilt from the resolved value, so a
-			 * secret the wire never returned cannot be resurrected by a write.
+			 * applies again. Each stored path is named rather than rebuilt from
+			 * the resolved value, so a secret the wire never returned cannot be
+			 * resurrected by this write.
 			 */
 			const reset = async () => {
 				setBusy(true);
@@ -236,6 +428,7 @@ window.__ModuleLoader__.load({
 						setDraft(toDraft(namespace.value));
 					}
 					setStatus("Reset — the composition row applies again");
+					void loadServerFacts();
 				} catch (error) {
 					setFailure(error.message);
 				} finally {
@@ -253,6 +446,7 @@ window.__ModuleLoader__.load({
 					if (answer.ok === true) {
 						setDiscovered(answer.value);
 						if (answer.value.length === 0) setStatus("That endpoint reported no models");
+						void loadServerFacts();
 					} else {
 						setFailure(answer.error.message);
 					}
@@ -264,90 +458,161 @@ window.__ModuleLoader__.load({
 			};
 
 			if (namespace === null) {
-				return React.createElement("div", { style: styles.wrap },
-					React.createElement("div", { style: failure === null ? styles.hint : styles.error },
+				return React.createElement("div", { className: "dsh-llamacpp-card" },
+					React.createElement("p", { className: failure === null ? "dsh-llamacpp-note" : "dsh-llamacpp-error" },
 						failure ?? `Reading the ${NS} settings section…`));
 			}
 
-			const controls = FIELDS.map((field) => {
-				const id = `${NS}-${field.key}`;
-				const label = React.createElement("label", { key: "l", style: styles.label, htmlFor: id }, field.label);
-				const hint = field.hint === undefined
-					? null
-					: React.createElement("span", { key: "h", style: styles.hint }, field.hint);
-				let control;
-				if (field.kind === "boolean") {
-					control = React.createElement("input", {
-						key: "c", id, type: "checkbox", checked: draft[field.key] === true, disabled,
-						onChange: (event) => { edit(field.key, event.target.checked) },
-					});
-				} else if (field.kind === "select") {
-					control = React.createElement("select", {
-						key: "c", id, style: styles.input, value: draft[field.key], disabled,
-						onChange: (event) => { edit(field.key, event.target.value) },
-					}, field.options.map((option) => React.createElement("option", { key: option, value: option }, option)));
-				} else if (field.kind === "map") {
-					control = React.createElement("textarea", {
-						key: "c", id, style: styles.input, rows: field.lines ?? 3, spellCheck: false, disabled,
-						placeholder: "x-team: local", value: draft[field.key],
-						onChange: (event) => { edit(field.key, event.target.value) },
-					});
-				} else {
-					control = React.createElement("input", {
-						key: "c", id, style: styles.input, disabled,
-						type: field.kind === "number" ? "number" : field.kind === "password" ? "password" : "text",
-						...field.step === undefined ? {} : { step: field.step },
-						...field.placeholder === undefined ? {} : { placeholder: field.placeholder },
-						value: draft[field.key],
-						onChange: (event) => { edit(field.key, event.target.value) },
-					});
-				}
-				return React.createElement("div", { key: field.key, style: styles.field }, label, control, hint);
+			const text = (key, off) => React.createElement("input", {
+				id: `${NS}-${key}`, className: "dsh-llamacpp-input", disabled: off,
+				type: key === "apiKey" ? "password" : "text",
+				...key === "baseURL" ? { placeholder: "http://localhost:8080/v1" } : {},
+				...key === "apiKey" ? { placeholder: "no-key" } : {},
+				value: draft[key],
+				onChange: event => { edit(key, event.target.value) },
 			});
 
-			const actions = React.createElement("div", { style: styles.actions },
+			const number = (key, off) => React.createElement("input", {
+				id: `${NS}-${key}`, className: "dsh-llamacpp-input", disabled: off, type: "number", min: "0",
+				...key === "temperature" ? { step: "0.05" } : {},
+				value: draft[key],
+				onChange: event => { edit(key, event.target.value) },
+			});
+
+			// With discovery off nothing asks the server, so the pinned value is the
+			// only thing left that decides the window — and it is required. The
+			// capability probe still runs, which is why the probe timeout stays
+			// available in both modes.
+			const contextField = discovery
+				? React.createElement(Field, {
+					id: `${NS}-contextWindow`,
+					label: "Context window",
+					hint: serverFacts === null
+						? "Read from the server's /props, per resolution."
+						: `Read from /props for ${serverFacts.count === 1 ? serverFacts.model : `${serverFacts.count} models`}. Turn discovery off to pin a smaller budget.`,
+				}, React.createElement("div", { className: "dsh-llamacpp-readout" }, "discovered from the server"))
+				: React.createElement(Field, {
+					id: `${NS}-contextWindow`,
+					label: "Pinned context window",
+					hint: "Required while discovery is off: nothing else can say how much context this model has.",
+				}, number("contextWindow"));
+
+			const connection = React.createElement("div", { className: "dsh-llamacpp-group" },
+				React.createElement("span", { className: "dsh-llamacpp-legend" }, "Connection"),
+				React.createElement("div", { className: "dsh-llamacpp-grid" },
+					React.createElement(Field, {
+						id: `${NS}-baseURL`,
+						label: "Base URL",
+						hint: "The llama.cpp API base. A value without /v1 gets one.",
+					}, text("baseURL", busy)),
+					React.createElement(Field, {
+						id: `${NS}-apiKey`,
+						label: "API key",
+						hint: "Bearer token; ignored unless the server runs with --api-key.",
+					}, text("apiKey", busy)),
+					React.createElement(Field, {
+						id: `${NS}-headers`,
+						label: "Extra headers",
+						hint: "One per line, as name: value. For a proxy in front of the server.",
+					}, React.createElement("textarea", {
+						id: `${NS}-headers`, className: "dsh-llamacpp-input", rows: 2, spellCheck: false, disabled: busy,
+						placeholder: "x-team: local", value: draft.headers,
+						onChange: event => { edit("headers", event.target.value) },
+					})),
+				),
+			);
+
+			const model = React.createElement("div", { className: "dsh-llamacpp-group" },
+				React.createElement("span", { className: "dsh-llamacpp-legend" }, "Model"),
+				React.createElement("div", { className: "dsh-llamacpp-grid" },
+					contextField,
+					React.createElement(Field, {
+						id: `${NS}-maxTokens`,
+						label: "Output cap",
+						hint: "Leave empty to derive it from the context window.",
+					}, number("maxTokens", busy)),
+				),
+				React.createElement("label", { className: "dsh-llamacpp-toggle", htmlFor: `${NS}-discoverContext` },
+					React.createElement("input", {
+						id: `${NS}-discoverContext`, type: "checkbox", disabled: busy,
+						checked: discovery,
+						onChange: event => { edit("discoverContext", event.target.checked) },
+					}),
+					"Ask the server for the context window and thinking mode",
+				),
+				React.createElement(Field, {
+					id: `${NS}-probeTimeoutMs`,
+					label: "Probe timeout (ms)",
+					hint: "How long /props may take before a request proceeds without it. Empty uses 1500.",
+				}, number("probeTimeoutMs", busy)),
+			);
+
+			const advanced = React.createElement("details", { className: "dsh-llamacpp-details" },
+				React.createElement("summary", null, "Advanced"),
+				React.createElement("div", { className: "dsh-llamacpp-grid" },
+					React.createElement(Field, {
+						id: `${NS}-temperature`,
+						label: "Temperature",
+						hint: "Applied when a request names none.",
+					}, number("temperature", busy)),
+					React.createElement(Field, {
+						id: `${NS}-logLevel`,
+						label: "Diagnostics",
+						hint: "info logs what was discovered at startup.",
+					}, React.createElement("select", {
+						id: `${NS}-logLevel`, className: "dsh-llamacpp-input", disabled: busy,
+						value: draft.logLevel,
+						onChange: event => { edit("logLevel", event.target.value) },
+					}, ["silent", "info", "verbose"].map(option =>
+						React.createElement("option", { key: option, value: option }, option)))),
+				),
+			);
+
+			const actions = React.createElement("div", { className: "dsh-llamacpp-actions" },
 				React.createElement("button", {
-					type: "button", style: { ...styles.button, ...styles.primary },
-					disabled: disabled || !changed, onClick: save,
+					type: "button", className: "dsh-llamacpp-button dsh-llamacpp-button-primary",
+					disabled: busy || !changed, onClick: save,
 				}, changed ? "Save" : "Saved"),
 				React.createElement("button", {
-					type: "button", style: styles.button, disabled: disabled, onClick: discover,
+					type: "button", className: "dsh-llamacpp-button", disabled: busy, onClick: discover,
 				}, "Test connection"),
 				React.createElement("button", {
-					type: "button", style: styles.button, disabled: disabled, onClick: reset,
+					type: "button", className: "dsh-llamacpp-button", disabled: busy, onClick: reset,
 				}, "Reset to composition"),
-				busy ? React.createElement("span", { style: styles.hint }, "working…") : null,
+				busy ? React.createElement("span", { className: "dsh-llamacpp-hint" }, "working…") : null,
 			);
 
 			const report = React.createElement(React.Fragment, null,
-				status === null ? null : React.createElement("div", { style: styles.status }, status),
-				failure === null ? null : React.createElement("div", { style: styles.error }, failure),
+				status === null ? null : React.createElement("div", { className: "dsh-llamacpp-status" }, status),
+				failure === null ? null : React.createElement("div", { className: "dsh-llamacpp-error" }, failure),
 				discovered === null
 					? null
-					: React.createElement("pre", { style: styles.pre }, discovered.length === 0
+					: React.createElement("pre", { className: "dsh-llamacpp-readout" }, discovered.length === 0
 						? "No models reported."
-						: discovered.map((model) => [
-							model.id,
-							model.name === undefined || model.name === model.id ? "" : ` (${model.name})`,
-							model.contextWindow === undefined ? "" : ` — ${model.contextWindow} token context`,
+						: discovered.map(entry => [
+							entry.id,
+							entry.name === undefined || entry.name === entry.id ? "" : ` (${entry.name})`,
+							entry.contextWindow === undefined ? "" : ` — ${entry.contextWindow} token context`,
 						].join("")).join("\n")),
 			);
 
-			return React.createElement("div", { style: styles.wrap },
-				React.createElement("div", { style: styles.summary },
+			return React.createElement("div", { className: "dsh-llamacpp-card" },
+				React.createElement("p", { className: "dsh-llamacpp-note" },
 					"Endpoint configuration for the ",
 					provider === undefined ? "llama.cpp" : provider.displayName,
-					" route — the context window and thinking mode come from the server unless pinned here."),
-				React.createElement("div", { style: styles.grid }, controls),
+					" route."),
+				connection,
+				model,
+				advanced,
 				actions,
 				report,
 			);
 		}
 
 		/**
-		 * Services this plugin needs before it can register anything. The
-		 * Remote namespaces are named individually: the guard rejects a
-		 * generated member reached through the bare `remote` service.
+		 * Services this plugin needs before it can register anything. The Remote
+		 * namespaces are named individually: the guard rejects a generated member
+		 * reached through the bare `remote` service.
 		 */
 		const inject = ["slots", "remote", "remote.settings", "remote.llm"];
 		exports.inject = inject;
@@ -357,9 +622,10 @@ window.__ModuleLoader__.load({
 		 * @param ctx - the Client plugin context.
 		 */
 		function apply(ctx) {
+			mountStyles();
 			ctx.slots.inject(SLOT, () => ctx.slots.register(
 				{ name: SLOT, key: NS },
-				(props) => React.createElement(LlamaCppCard, { ...props, remote: ctx.remote }),
+				props => React.createElement(LlamaCppCard, { ...props, remote: ctx.remote }),
 			));
 		}
 		exports.apply = apply;
