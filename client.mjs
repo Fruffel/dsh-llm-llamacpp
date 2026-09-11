@@ -250,6 +250,14 @@ window.__ModuleLoader__.load({
   white-space: nowrap;
   color: var(--dsw-alias-label-secondary);
 }
+.dsh-llamacpp-summary-action {
+  flex: none;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+}
+.dsh-llamacpp-summary:hover .dsh-llamacpp-summary-action {
+  color: var(--dsw-alias-label-primary);
+}
 .dsh-llamacpp-chevron {
   flex: none;
   color: var(--dsw-alias-label-secondary);
@@ -747,6 +755,10 @@ window.__ModuleLoader__.load({
 				}),
 				React.createElement("span", { className: "dsh-llamacpp-summary-state" }, DOT_LABEL[endpoint.status]),
 				React.createElement("span", { className: "dsh-llamacpp-summary-detail" }, summaryDetail(endpoint)),
+				// Named rather than left to the chevron: this line is the row's way into its
+				// own settings, and the page's Edit button opens the Host's generic editor
+				// for this family, which is not where these fields live.
+				React.createElement("span", { className: "dsh-llamacpp-summary-action" }, open ? "Collapse" : "Configure"),
 				React.createElement("span", { className: "dsh-llamacpp-chevron", "aria-hidden": "true" }, open ? "▾" : "▸"),
 			);
 

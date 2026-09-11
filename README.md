@@ -72,10 +72,12 @@ The web GUI edits this provider in place. Settings → Models shows a row for
 **llama.cpp** whose card stays closed until it is asked for: one status line
 reports whether the configured endpoint answers — a green dot when it does, a
 red one when it does not, with the reason beside it — which endpoint that is,
-and how many models it serves. Clicking the line unfolds a card with every field
-below, a **Test connection** button that interrogates the endpoint being typed
-and reports the models and context window it finds, and **Reset to composition**,
-which clears the section so the row's own values apply again.
+and how many models it serves. Clicking the line — its own **Configure**
+control, not the page's **Edit** button, which opens the Host's generic editor
+for this family — unfolds a card with every field below, a **Test connection**
+button that interrogates the endpoint being typed and reports the models and
+context window it finds, and **Reset to composition**, which clears the section
+so the row's own values apply again.
 
 That dot is the card's own, and deliberately so: llama.cpp ignores the
 credential, so the page's own credential dot never lights for this family, and

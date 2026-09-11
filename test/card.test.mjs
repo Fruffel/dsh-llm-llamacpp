@@ -185,6 +185,8 @@ test('the card is closed until asked, and says whether its endpoint answers', as
     assert.deepEqual(card.inputs(), [])
     assert.equal(card.dot()?.className.includes('dsh-llamacpp-dot-connected'), true)
     assert.equal(card.summary()?.textContent.includes('Connected'), true)
+    // The line names its own action; the page's Edit button is a different door.
+    assert.equal(card.summary()?.querySelector('.dsh-llamacpp-summary-action')?.textContent, 'Configure')
     assert.equal(card.detail(), 'http://desktop:8080/v1 · 2 models')
     // The endpoint probed is the resolved one, not a placeholder.
     assert.deepEqual(calls.discover, [{ ns: 'llm-llamacpp', baseURL: 'http://desktop:8080/v1' }])
@@ -199,6 +201,7 @@ test('opening the card reveals every field, and closing it takes them away', asy
   try {
     await card.click(card.summary())
     assert.equal(card.summary()?.getAttribute('aria-expanded'), 'true')
+    assert.equal(card.summary()?.querySelector('.dsh-llamacpp-summary-action')?.textContent, 'Collapse')
     assert.deepEqual(card.inputs(), [
       'llm-llamacpp-baseURL', 'llm-llamacpp-apiKey', 'llm-llamacpp-headers', 'llm-llamacpp-maxTokens',
       'llm-llamacpp-discoverContext', 'llm-llamacpp-probeTimeoutMs', 'llm-llamacpp-temperature',
