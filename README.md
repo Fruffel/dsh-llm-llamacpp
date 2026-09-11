@@ -38,16 +38,25 @@ machine running the harness, and mount it from the profile's patch file.
 The web profile live-reloads `cordis.patch.yml`, so the provider appears without
 a restart. `journalctl --user -u dsh-web -f` shows the mount and any diagnostic.
 
-On the machine this was developed on, the row mounts this repository in place —
-`/home/fruffel/Documents/projects/dsh-llm-llamacpp/index.mjs` — rather than a copy
-under the profile directory. One working copy, mounted where it lives: the file
-that runs is the file under version control, and shipping a change is a
-`git pull` plus a `dsh-web` restart. Point the row at your own checkout.
+### Shipping a change
 
-Config edits (a new `baseURL`) reach the next request with no restart, because
-the profile reloads its patch layer. **Code** edits do not: the harness keeps the
-module it imported, so `index.mjs` / `client.mjs` / `lib/*.mjs` changes need the
-restart.
+This repository is the source of truth; a deployment mounts a checkout of it.
+On the machine it was developed on, the deployment is a `dsh-ops` checkout whose
+`plugins.conf` names this repository, so the loop is:
+
+```bash
+# in this checkout
+git commit && git push
+# in the deployment
+bin/dsh-plugins.sh --update      # fast-forwards the clone under plugins/
+bin/dsh-install-assets.sh        # copies the package into the profile layer
+systemctl --user restart dsh-web # the harness keeps the module it imported
+```
+
+Config edits (a new `baseURL`) take effect with **no restart** — the profile
+reloads its patch layer, and the value is read per request. **Code** edits do
+not: the harness holds the module it imported, so `index.mjs`, `client.mjs`, and
+`lib/*.mjs` need the restart.
 
 Two things the harness needs from the host machine:
 
