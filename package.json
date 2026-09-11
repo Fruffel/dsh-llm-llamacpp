@@ -1,0 +1,14 @@
+{
+  "name": "dsh-llm-llamacpp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "llama.cpp LLM provider for the DeepSeek Harness: dynamic model catalog plus automatic context-window discovery",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
